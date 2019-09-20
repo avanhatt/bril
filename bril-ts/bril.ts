@@ -33,12 +33,19 @@ export interface ValueOperation {
   type: Type;
 }
 
+export interface Return {
+  dest: Ident;
+  type: Type; 
+}
+
+/**
+ * TODO: comment
+ */
 export interface CallOperation {
   op: "call";
   name: Ident;
   args: Ident[];
-  dest: Ident; // TODO: maybe make optional
-  type: Type;  // TODO: maybe make optional
+  ret?: Return;
 }
 
 /**

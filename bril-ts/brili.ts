@@ -28,10 +28,14 @@ type Value = boolean | BigInt;
 type ReturnValue = Value | null;
 type Env = Map<bril.Ident, Value>;
 
-// const typeIDToType: {string : bril.Type} = {
-//   'number': bril.number,
-//   'bool': bril.bool,
-// }
+/**
+ * We need a correspondence between Bril's understanding of a type and the 
+ * interpreter's underlying representation type 
+ */
+const brilTypeToDynamicType: {[key in bril.Type] : string} = {
+  'int' : 'bigint',
+  'bool': 'boolean',
+};
 
 function get(env: Env, ident: bril.Ident) {
   let val = env.get(ident);
@@ -60,20 +64,22 @@ function checkArgs(instr: bril.Operation, count: number) {
   }
 }
 
-function getInt(instr: bril.Operation, env: Env, index: number) {
+function getArgument(instr: bril.Operation, env: Env, index: number, 
+  typ : bril.Type) {
   let val = get(env, instr.args[index]);
-  if (typeof val !== 'bigint') {
-    throw `${instr.op} argument ${index} must be a number`;
+  let brilTyp = brilTypeToDynamicType[typ];
+  if (brilTyp !== typeof val) {
+    throw `${instr.op} argument ${index} must be a {brilTyp}`;
   }
   return val;
 }
 
-function getBool(instr: bril.Operation, env: Env, index: number) {
-  let val = get(env, instr.args[index]);
-  if (typeof val !== 'boolean') {
-    throw `${instr.op} argument ${index} must be a boolean`;
-  }
-  return val;
+function getInt(instr: bril.Operation, env: Env, index: number) : bigint {
+  return getArgument(instr, env, index, 'int') as bigint;
+}
+
+function getBool(instr: bril.Operation, env: Env, index: number) : boolean {
+  return getArgument(instr, env, index, 'bool') as boolean;
 }
 
 /**
@@ -245,11 +251,16 @@ function evalInstr(instr: bril.Instruction, env: Env, funcs: bril.Function[]): A
 
     let newEnv: Env = new Map();
 
-    for (let i = 0; i < func.args.length; i++) {
-      // TODO: check types! and arity!
+    // check arity of arguments and definition
 
+    for (let i = 0; i < func.args.length; i++) {
       // Look up the variable in the current (calling) environment
       let value = get(env, instr.args[i]);
+
+      // check argument types
+      // if (brilTypeToDynamicType[func.args[i].type] !== typeof value) {
+      //   throw `function argument type mismatch`
+      // }
 
       // Set the value of the arg in the new (function) environemt
       newEnv.set(func.args[i].name, value);
@@ -258,7 +269,7 @@ function evalInstr(instr: bril.Instruction, env: Env, funcs: bril.Function[]): A
     // TODO check function return type against what's being returned
     // let retType = instr.type;
     let retVal = evalFuncInEnv(func, funcs, newEnv);
-    switch (instr.type) {
+    switch (instr.ret) {
       case undefined:
         // void return type
         if (retVal !== null) {
@@ -266,23 +277,20 @@ function evalInstr(instr: bril.Instruction, env: Env, funcs: bril.Function[]): A
         }
         break;
       default:
-        console.log(typeof retVal);
-        console.log(typeof instr.type);
-        //if (typeof retVal !== typeof instr.type) {
-
-        //}
-        // code...
+        if (retVal === null) {
+          throw `nothing returned from non-void function`
+        }
+        if (brilTypeToDynamicType[instr.ret.type] !== typeof retVal) {
+          throw `type of value returned by function does not match declaration`;
+        }
+        env.set(instr.ret.dest, retVal);
+        console.log(instr.ret.dest)
+        console.log(env.get(instr.ret.dest))
         break;
     }
-
-    if (retVal != null) {
-      env.set(instr.dest, retVal);
-    }
-
     return NEXT;
   }
   
-
   }
   unreachable(instr);
   throw `unhandled opcode ${(instr as any).op}`;

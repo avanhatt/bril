@@ -44,6 +44,18 @@ export class Builder {
     return instr;
   }
 
+  buildCallOperation(op: bril.CallOpCode, name : string, args: string[],
+                     type?: bril.Type, dest?: string) {
+    var ret : bril.Return | undefined = undefined;
+    if (type !== undefined && dest !== undefined) {
+      let ret = { type, dest} 
+    } else if (type !== undefined || dest !== undefined) {
+      throw 'call must provide both or neither dest and type';
+    }
+    let instr : bril.CallOperation = { op, name, args, ret }
+    return instr;
+  }
+
   /**
    * Build a constant instruction. As above, the destination name is optional.
    */
