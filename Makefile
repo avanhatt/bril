@@ -2,7 +2,9 @@ TESTS := test/parse/*.bril \
 	test/print/*.json \
 	test/interp*/*.bril \
 	test/ts*/*.ts \
-	test/gvn/*.bril
+	test/gvn/*.bril \
+	test/mem/*.bril \
+	test/fail/*.t \
 
 EXAMPLE_TESTS :=  examples/*_test/*.bril 
 
@@ -40,3 +42,6 @@ DEST := courses:coursewww/capra.cs.cornell.edu/htdocs/bril
 deploy: book
 	rsync $(RSYNCARGS) ./book/ $(DEST)
 
+.PHONY: build
+build:
+	cd bril-ts; yarn build

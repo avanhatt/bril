@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import * as bril from './bril';
+import { Heap, Key } from './heap';
 import {readStdin, unreachable} from './util';
 
 class BriliError extends Error {
@@ -30,10 +31,21 @@ const argCounts: {[key in bril.OpCode]: number | null} = {
   ret: null, // Should be 0 or 1
   nop: 0,
   call: null,
+  alloc: 1,
+  free: 1,
+  store: 2,
+  load: 1,
+  ptradd: 2
 };
 
-type Value = boolean | BigInt;
+type Pointer = {
+  loc: Key;
+  type: bril.Type;
+}
+
+type Value = boolean | Pointer | BigInt;
 type ReturnValue = Value | null;
+
 type Env = Map<bril.Ident, Value>;
 
 /**
@@ -43,6 +55,8 @@ type Env = Map<bril.Ident, Value>;
 const brilTypeToDynamicType: {[key in bril.Type] : string} = {
   'int' : 'bigint',
   'bool': 'boolean',
+  'ptr' : 'object',
+
 };
 
 function get(env: Env, ident: bril.Ident) {
@@ -65,6 +79,24 @@ function findFunc(func : bril.Ident, funcs: bril.Function[]) {
   }
 
   return matches[0];
+}
+
+function alloc(ptrType: bril.PointerType, amt:number, heap:Heap<Value>): Pointer {
+  if (typeof ptrType != 'object') {
+    throw `unspecified pointer type ${ptrType}`
+  } else if (amt <= 0) {
+    throw `must allocate a positive amount of memory: ${amt} <= 0`
+  } else {
+    let loc = heap.alloc(amt)
+    let dataType = ptrType.ptr;
+    if (dataType !== "int" && dataType !== "bool") {
+      dataType = "ptr";
+    }
+    return {
+      loc: loc,
+      type: dataType
+    }
+  }
 }
 
 /**
@@ -95,6 +127,14 @@ function getBool(instr: bril.Operation, env: Env, index: number) : boolean {
   return getArgument(instr, env, index, 'bool') as boolean;
 }
 
+function getPtr(instr: bril.Operation, env: Env, index: number): Pointer {
+  let val = get(env, instr.args[index]);
+  if (typeof val !== 'object' || val instanceof BigInt) {
+    throw `${instr.op} argument ${index} must be a Pointer`;
+  }
+  return val;
+}
+
 /**
  * The thing to do after interpreting an instruction: either transfer
  * control to a label, go to the next instruction, or end thefunction.
@@ -109,7 +149,7 @@ let END: Action = {"end": true};
 /**
  * Interpet a call instruction.
  */
-function evalCall(instr: bril.CallOperation, env: Env, funcs: bril.Function[])
+function evalCall(instr: bril.CallOperation, env: Env, funcs: bril.Function[], heap: Heap<Value>)
   : Action {
   let func = findFunc(instr.name, funcs);
   if (func === null) {
@@ -139,7 +179,7 @@ function evalCall(instr: bril.CallOperation, env: Env, funcs: bril.Function[])
   let valueCall : bril.ValueCallOperation = instr as bril.ValueCallOperation;
 
   // Dynamically check the function's return value and type
-  let retVal = evalFuncInEnv(func, funcs, newEnv);
+  let retVal = evalFuncInEnv(func, funcs, newEnv, heap);
   if (valueCall.dest === undefined && valueCall.type === undefined) {
      // Expected void function
     if (retVal !== null) {
@@ -176,7 +216,7 @@ function evalCall(instr: bril.CallOperation, env: Env, funcs: bril.Function[])
  * otherwise, return "next" to indicate that we should proceed to the next
  * instruction or "end" to terminate the function.
  */
-function evalInstr(instr: bril.Instruction, env: Env, funcs: bril.Function[]): Action {
+function evalInstr(instr: bril.Instruction, env: Env, funcs: bril.Function[], heap:Heap<Value>): Action {
   // Check that we have the right number of arguments.
   if (instr.op !== "const") {
     let count = argCounts[instr.op];
@@ -314,20 +354,70 @@ function evalInstr(instr: bril.Instruction, env: Env, funcs: bril.Function[]): A
   }
 
   case "call": {
-    return evalCall(instr, env, funcs);
+    return evalCall(instr, env, funcs, heap);
   }
   
+  case "alloc": {
+    let amt = getInt(instr, env, 0)
+    let ptr = alloc(instr.type, Number(amt), heap)
+    env.set(instr.dest, ptr);
+    return NEXT;
+  }
+
+  case "free": {
+    let val = getPtr(instr, env, 0)
+    heap.free(val.loc);
+    return NEXT;
+  }
+
+  case "store": {
+    let target = getPtr(instr, env, 0)
+    switch (target.type) {
+      case "int": {
+        heap.write(target.loc, getInt(instr, env, 1))
+        break;
+      }
+      case "bool": {
+        heap.write(target.loc, getBool(instr, env, 1))
+        break;
+      }
+      case "ptr": {
+        heap.write(target.loc, getPtr(instr, env, 1))
+        break;
+      }
+    }
+    return NEXT;
+  }
+
+  case "load": {
+    let ptr = getPtr(instr, env, 0)
+    let val = heap.read(ptr.loc)
+    if (val == undefined || val == null) {
+      throw `Pointer ${instr.args[0]} points to uninitialized data`;
+    } else {
+      env.set(instr.dest, val)
+    }
+    return NEXT;
+  }
+
+  case "ptradd": {
+    let ptr = getPtr(instr, env, 0)
+    let val = getInt(instr, env, 1)
+    env.set(instr.dest, { loc: ptr.loc.add(Number(val)), type: ptr.type })
+    return NEXT;
+  }
+
   }
   unreachable(instr);
   throw new BriliError(`unhandled opcode ${(instr as any).op}`);
 }
 
-function evalFuncInEnv(func: bril.Function, funcs: bril.Function[], env: Env)
+function evalFuncInEnv(func: bril.Function, funcs: bril.Function[], env: Env, heap: Heap<Value>)
   : ReturnValue {
   for (let i = 0; i < func.instrs.length; ++i) {
     let line = func.instrs[i];
     if ('op' in line) {
-      let action = evalInstr(line, env, funcs);
+      let action = evalInstr(line, env, funcs, heap);
 
       if ('label' in action) {
         // Search for the label and transfer control.
@@ -384,13 +474,18 @@ function parseMainArguments(expected: bril.Argument[], args: string[]) : Env {
 
 function evalProg(prog: bril.Program) {
   let main = findFunc("main", prog.functions);
+  let heap = new Heap<Value>()
+
   if (main === null) {
     console.log(`warning: no main function defined, doing nothing`);
   } else {
     let expected = main.args;
     let args : string[] = process.argv.slice(2, process.argv.length);
     let newEnv = parseMainArguments(expected, args);
-    evalFuncInEnv(main, prog.functions, newEnv);
+    evalFuncInEnv(main, prog.functions, newEnv, heap);
+  }
+  if (!heap.isEmpty()) {
+    throw `Some memory locations have not been freed by end of execution.`
   }
 }
 

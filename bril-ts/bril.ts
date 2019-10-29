@@ -10,13 +10,21 @@ export type Ident = string;
 /**
  * Value types.
  */
-export type Type = "int" | "bool";
+export type Type = "int" | "bool" | "ptr";
+
+/**
+ * The types to which a pointer may be pointing;
+ */
+export type PointerType = {
+  "ptr" : Type | PointerType;
+}
 
 /**
  * An instruction that does not produce any result.
  */
 export interface EffectOperation {
-  op: "br" | "jmp" | "print" | "ret";
+  op: "br" | "jmp" | "print" | "ret" |
+      "store" | "free";
   args: Ident[];
 }
 
@@ -27,10 +35,18 @@ export interface EffectOperation {
 export interface ValueOperation {
   op: "add" | "mul" | "sub" | "div" |
       "id" | "nop" |
-      "eq" | "lt" | "gt" | "ge" | "le" | "not" | "and" | "or";
+      "eq" | "lt" | "gt" | "ge" | "le" | "not" | "and" | "or" |
+      "load" | "ptradd";
   args: Ident[];
   dest: Ident;
   type: Type;
+}
+
+export interface PointerValueOperation {
+  op: "alloc";
+  args: Ident[];
+  dest: Ident;
+  type: PointerType;
 }
 
 /**
@@ -65,6 +81,7 @@ export type CallOperation = ValueCallOperation | EffectCallOperation;
  */
 export type Value = number | boolean;
 
+
 /**
  * An instruction that places a literal value into a variable.
  */
@@ -78,7 +95,7 @@ export interface Constant {
 /**
  * Operations take arguments, which come from previously-assigned identifiers.
  */
-export type Operation = EffectOperation | ValueOperation | CallOperation;
+export type Operation = EffectOperation | ValueOperation | CallOperation | PointerValueOperation;
 
 /**
  * Instructions can be operations (which have arguments) or constants (which
@@ -95,11 +112,13 @@ export type ValueInstruction = Constant | ValueOperation | ValueCallOperation;
  * The valid opcodes for value-producing instructions.
  */
 export type ValueOpCode = ValueOperation["op"];
+export type PointerValueOpCode = PointerValueOperation["op"];
 
 /**
  * The valid opcodes for effecting operations.
  */
 export type EffectOpCode = EffectOperation["op"];
+
 
 /**
  * The valid opcode for call operations.
@@ -109,7 +128,7 @@ export type CallOpCode = CallOperation["op"];
 /**
  * All valid operation opcodes.
  */
-export type OpCode = ValueOpCode | EffectOpCode | CallOpCode;
+export type OpCode = ValueOpCode | EffectOpCode | CallOpCode | PointerValueOpCode;
 
 /**
  * Jump labels just mark a position with a name.
